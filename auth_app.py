@@ -66,24 +66,30 @@ class AuthenticationApp(QWidget):
 
     def setupSecureDesktop(self):
         try:
+            # Store the current desktop handle
             self.original_desktop = win32api.GetThreadDesktop(win32api.GetCurrentThreadId())
 
+            # Create a new secure desktop
             self.secure_desktop = win32api.CreateDesktop(
                 "SecureAuthDesktop",
-                0,  
-                win32con.GENERIC_ALL,  
+                0,  # No special flags
+                win32con.GENERIC_ALL,  # Full access rights
                 win32security.SECURITY_ATTRIBUTES()
             )
 
+            # Switch to the secure desktop
             self.secure_desktop.SetThreadDesktop()
 
+            # Set strict security descriptor
             sd = win32security.SECURITY_DESCRIPTOR()
             sd.Initialize()
             
+            # Create a restricted SID for the desktop
             restricted_sid = win32security.CreateWellKnownSid(
                 win32security.WinRestrictedCodeSid
             )
             
+            # Set up DACL (Discretionary Access Control List)
             dacl = win32security.ACL()
             dacl.AddAccessAllowedAce(
                 win32security.ACL_REVISION,
@@ -96,6 +102,7 @@ class AuthenticationApp(QWidget):
 
         except Exception as e:
             print(f"Error setting up secure desktop: {e}")
+            # Fallback to regular desktop with enhanced protection
             self.setupFallbackProtection()
 
     def setupFallbackProtection(self):
@@ -132,43 +139,45 @@ class AuthenticationApp(QWidget):
             if current_desktop != self.original_desktop:
                 # Force back to our window
                 self.activateWindow()
-                self.raise_(
+                self.raise_()
         except Exception:
             pass
 
     def initUI(self):
-
+        # Set window properties to be always on top and full screen
         self.setWindowFlags(
             Qt.Window |
             Qt.WindowStaysOnTopHint |
             Qt.FramelessWindowHint
         )
         
-
+        # Set window to cover entire screen
         screen = QApplication.primaryScreen().geometry()
         self.setGeometry(screen)
         
         self.setWindowTitle("Task-Based Authentication")
         
-       
+        # Create a main layout for the full screen
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(50, 50, 50, 50)  
+        main_layout.setContentsMargins(50, 50, 50, 50)  # Add margins around the content
         
+        # Create a central widget to hold the authentication content
         content_widget = QWidget()
-        content_widget.setFixedWidth(600)  
+        content_widget.setFixedWidth(600)  # Set fixed width for better visibility
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setSpacing(15)  
+        content_layout.setSpacing(15)  # Add spacing between elements
         
         self.label = QLabel("Select the 3 files you worked on recently:")
         self.label.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
         content_layout.addWidget(self.label)
 
         self.recent_files = load_files_during_sleep()
-        if not self.recent_files:  
+        if not self.recent_files:  # Add some dummy files if none are loaded
             self.recent_files = ["document1.txt", "document2.txt", "document3.txt"]
         self.correct_files = self.get_random_correct_files()
         self.challenge_files = self.generate_challenge_files()
 
+        # Create checkboxes with proper styling
         self.checkboxes = []
         for file in self.challenge_files:
             checkbox = QCheckBox(file)
@@ -186,6 +195,7 @@ class AuthenticationApp(QWidget):
             self.checkboxes.append(checkbox)
             content_layout.addWidget(checkbox)
 
+        # Add submit button with proper styling
         self.submit_btn = QPushButton("Submit")
         self.submit_btn.setStyleSheet("""
             QPushButton {
@@ -204,19 +214,27 @@ class AuthenticationApp(QWidget):
         """)
         self.submit_btn.clicked.connect(self.verify)
         content_layout.addWidget(self.submit_btn, alignment=Qt.AlignCenter)
+
+        # Center the content widget in the main layout
         main_layout.addWidget(content_widget, alignment=Qt.AlignCenter)
         self.setLayout(main_layout)
+
+        # Set semi-transparent dark background
         self.setStyleSheet("background-color: rgba(0, 0, 0, 180);")
         content_widget.setStyleSheet("background-color: rgba(40, 40, 40, 200); padding: 30px; border-radius: 10px;")
 
     def makeSecure(self):
+        # Start timer to enforce focus
         self.block_input_timer = QTimer(self)
         self.block_input_timer.timeout.connect(self.enforce_focus)
         self.block_input_timer.start(100)  # Check every 100ms
+        
+        # Set up keyboard hook
         self.hm.KeyDown = self.on_keyboard_event
         self.hm.HookKeyboard()
 
     def on_keyboard_event(self, event):
+        """Handle keyboard events"""
         # Block Alt+F4, Alt+Tab, Win key, Ctrl+Esc, Ctrl+Alt+Del
         if (
             (event.Alt and event.Key == 'F4') or
@@ -230,6 +248,7 @@ class AuthenticationApp(QWidget):
         return True
 
     def enforce_focus(self):
+        """Keep window focused and on top"""
         current_window = GetForegroundWindow()
         current_pid = GetWindowThreadProcessId(current_window)[1]
         if current_pid != os.getpid():
@@ -237,7 +256,7 @@ class AuthenticationApp(QWidget):
             self.raise_()
 
     def cleanup(self):
-
+        """Restore original desktop state"""
         try:
             if self.original_desktop:
                 win32api.SetThreadDesktop(self.original_desktop)
@@ -287,18 +306,27 @@ class AuthenticationApp(QWidget):
         return combined_files
 
     def exit_application(self):
-
+        """Safely exit the application"""
         try:
+            # First unhook the keyboard
             self.hm.UnhookKeyboard()
             
+            # Stop all timers
             if self.block_input_timer:
                 self.block_input_timer.stop()
-        
+            
+            # Set auth_successful to True and clear window flags
             self.auth_successful = True
             self.setWindowFlags(Qt.Window)
-            self.show()
+            self.show()  # Refresh window with new flags
+            
+            # Clean up secure desktop
             self.cleanup()
+            
+            # Close the window
             self.close()
+            
+            # Ensure application exits
             QApplication.quit()
             
         except Exception as e:
@@ -314,14 +342,20 @@ class AuthenticationApp(QWidget):
             return
 
         if set(selected_files) == set(self.correct_files):
+            # Temporarily remove the window flags to show the message box
             self.setWindowFlags(Qt.Window)
             self.show()
+            
             msg_box = QMessageBox()
             msg_box.setIcon(QMessageBox.Information)
             msg_box.setWindowTitle("Access Granted")
             msg_box.setText("You have successfully logged in!")
             msg_box.setStandardButtons(QMessageBox.Ok)
+            
+            # Set the message box to be on top
             msg_box.setWindowFlags(Qt.WindowStaysOnTopHint)
+            
+            # Center the message box on screen
             screen = QApplication.primaryScreen().geometry()
             msg_box.move(
                 screen.center().x() - msg_box.width() // 2,
@@ -337,7 +371,11 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     auth_app = AuthenticationApp()
     auth_app.show()
+    
+    # Create a timer to process Windows messages
     message_timer = QTimer()
-    message_timer.timeout.connect(lambda: None)
-    message_timer.start(50)
+    message_timer.timeout.connect(lambda: None)  
+    message_timer.start(50)  
+    
+    
     sys.exit(app.exec_())
