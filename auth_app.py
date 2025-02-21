@@ -9,6 +9,7 @@ from win32gui import GetForegroundWindow
 from win32process import GetWindowThreadProcessId
 import win32con
 import win32api
+import win32gui
 import win32security
 import ntsecuritycon
 import pythoncom
@@ -60,9 +61,11 @@ class AuthenticationApp(QWidget):
         self.auth_successful = False
         self.secure_desktop = None
         self.original_desktop = None
+        self.mouse_position = None  # Store initial mouse position
         self.initUI()
         self.makeSecure()
         self.setupSecureDesktop()
+
 
     def setupSecureDesktop(self):
         try:
@@ -231,7 +234,51 @@ class AuthenticationApp(QWidget):
         
         # Set up keyboard hook
         self.hm.KeyDown = self.on_keyboard_event
+        
+        # Set up mouse hook
+        self.hm.MouseAll = self.on_mouse_event
+        
+        # Hook both keyboard and mouse
         self.hm.HookKeyboard()
+        self.hm.HookMouse()
+        
+        # Store initial mouse position
+        cursor_pos = win32gui.GetCursorPos()
+        self.mouse_position = cursor_pos
+
+    def on_mouse_event(self, event):
+        """Handle all mouse events including trackpad gestures"""
+        if not self.auth_successful:
+            # Get the current cursor position
+            current_pos = win32gui.GetCursorPos()
+            
+            # Allow mouse movement only within a small radius of the submit button
+            # and only for left click events
+            if event.MessageName == "mouse_left_down":
+                # Get the global position of the submit button
+                btn_pos = self.submit_btn.mapToGlobal(self.submit_btn.rect().center())
+                btn_x, btn_y = btn_pos.x(), btn_pos.y()
+                
+                # Check if click is within the button area
+                click_x, click_y = current_pos
+                button_radius = 50  # Adjust this value based on your button size
+                
+                if (abs(click_x - btn_x) <= button_radius and 
+                    abs(click_y - btn_y) <= button_radius):
+                    return True
+                
+                # Also allow clicks on checkboxes
+                for checkbox in self.checkboxes:
+                    cb_pos = checkbox.mapToGlobal(checkbox.rect().center())
+                    cb_x, cb_y = cb_pos.x(), cb_pos.y()
+                    if (abs(click_x - cb_x) <= button_radius and 
+                        abs(click_y - cb_y) <= button_radius):
+                        return True
+            
+            # Block all other mouse events
+            return False
+        
+        return True
 
     def on_keyboard_event(self, event):
         """Handle keyboard events"""
@@ -258,6 +305,9 @@ class AuthenticationApp(QWidget):
     def cleanup(self):
         """Restore original desktop state"""
         try:
+            # Unhook mouse before cleanup
+            self.hm.UnhookMouse()
+            
             if self.original_desktop:
                 win32api.SetThreadDesktop(self.original_desktop)
             
@@ -308,8 +358,9 @@ class AuthenticationApp(QWidget):
     def exit_application(self):
         """Safely exit the application"""
         try:
-            # First unhook the keyboard
+            # Unhook both keyboard and mouse
             self.hm.UnhookKeyboard()
+            self.hm.UnhookMouse()
             
             # Stop all timers
             if self.block_input_timer:
