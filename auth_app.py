@@ -17,7 +17,7 @@ import pyWinhook as pyhook
 import os
 
 def load_files_during_sleep():
-    """Load files accessed during the last session."""
+    # Load files accessed during the last session.
     try:
         with open("file_activity.json", "r") as activity_file:
             tracked_files = json.load(activity_file)
@@ -29,7 +29,7 @@ def load_files_during_sleep():
         return []
 
 def get_incorrect_files():
-    """Get a pool of realistic and believable incorrect file names for an enterprise environment."""
+    # Get a pool of realistic and believable incorrect file names for an enterprise environment.
     return [
         "project_plan_v2.docx",           # Project documentation
         "api_integration_guide.pdf",      # API documentation
@@ -109,7 +109,7 @@ class AuthenticationApp(QWidget):
             self.setupFallbackProtection()
 
     def setupFallbackProtection(self):
-        """Fallback protection if secure desktop creation fails"""
+        # Fallback protection if secure desktop creation fails
         try:
             # Disable task manager access
             key = win32api.RegOpenKeyEx(
@@ -136,7 +136,7 @@ class AuthenticationApp(QWidget):
             print(f"Error setting up fallback protection: {e}")
 
     def checkDesktopState(self):
-        """Monitor for desktop switching attempts"""
+        # Monitor for desktop switching attempts
         try:
             current_desktop = win32api.GetThreadDesktop(win32api.GetCurrentThreadId())
             if current_desktop != self.original_desktop:
@@ -247,7 +247,7 @@ class AuthenticationApp(QWidget):
         self.mouse_position = cursor_pos
 
     def on_mouse_event(self, event):
-        """Handle all mouse events including trackpad gestures"""
+        # Handle all mouse events including trackpad gestures
         if not self.auth_successful:
             # Get the current cursor position
             current_pos = win32gui.GetCursorPos()
@@ -281,7 +281,7 @@ class AuthenticationApp(QWidget):
         return True
 
     def on_keyboard_event(self, event):
-        """Handle keyboard events"""
+        # Handle keyboard events
         # Block Alt+F4, Alt+Tab, Win key, Ctrl+Esc, Ctrl+Alt+Del
         if (
             (event.Alt and event.Key == 'F4') or
@@ -295,7 +295,7 @@ class AuthenticationApp(QWidget):
         return True
 
     def enforce_focus(self):
-        """Keep window focused and on top"""
+        # Keep window focused and on top
         current_window = GetForegroundWindow()
         current_pid = GetWindowThreadProcessId(current_window)[1]
         if current_pid != os.getpid():
@@ -303,7 +303,7 @@ class AuthenticationApp(QWidget):
             self.raise_()
 
     def cleanup(self):
-        """Restore original desktop state"""
+        # Restore original desktop state
         try:
             # Unhook mouse before cleanup
             self.hm.UnhookMouse()
@@ -333,22 +333,14 @@ class AuthenticationApp(QWidget):
         except Exception as e:
             print(f"Error during cleanup: {e}")
 
-    def closeEvent(self, event):
-        """Prevent window from being closed unless authentication was successful"""
-        if not self.auth_successful:
-            event.ignore()
-        else:
-            self.cleanup()
-            event.accept()
-
     def get_random_correct_files(self):
-        """Randomly select 3 correct files from recently worked-on files."""
+        # Randomly select 3 correct files from recently worked-on files.
         if len(self.recent_files) < 3:
             return self.recent_files
         return random.sample(self.recent_files, 3)
 
     def generate_challenge_files(self):
-        """Combine correct and incorrect files, then shuffle them."""
+        # Combine correct and incorrect files, then shuffle them.
         incorrect_files = get_incorrect_files()
         selected_incorrect_files = random.sample(incorrect_files, 3) 
         combined_files = self.correct_files + selected_incorrect_files
@@ -356,7 +348,7 @@ class AuthenticationApp(QWidget):
         return combined_files
 
     def exit_application(self):
-        """Safely exit the application"""
+        # Safely exit the application
         try:
             # Unhook both keyboard and mouse
             self.hm.UnhookKeyboard()
@@ -384,7 +376,7 @@ class AuthenticationApp(QWidget):
             print(f"Error during exit: {e}")
 
     def verify(self):
-        """Check if the user selected all 3 correct files."""
+        # Check if the user selected all 3 correct files.
         selected_files = [cb.text() for cb in self.checkboxes if cb.isChecked()]
         
         # Check if exactly 3 files are selected
