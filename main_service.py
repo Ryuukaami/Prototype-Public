@@ -9,14 +9,16 @@ from datetime import datetime
 import win32api
 import win32con
 import win32gui
-import win32ts
 
 class PowerStateMonitor:
     def __init__(self, tracker_process_ref):
+        # Power state constants
         self.WM_POWERBROADCAST = 0x0218
         self.PBT_APMRESUMEAUTOMATIC = 0x0012
         self.PBT_APMSUSPEND = 0x0004
         self.tracker_process_ref = tracker_process_ref
+        self.window_handle = None
+        self.class_atom = None
         
     def create_window(self):
         """Create a hidden window to receive power broadcasts"""
@@ -24,9 +26,9 @@ class PowerStateMonitor:
         wc.lpfnWndProc = self._window_proc
         wc.lpszClassName = "PowerMonitorWindow"
         wc.hInstance = win32api.GetModuleHandle(None)
-        class_atom = win32gui.RegisterClass(wc)
-        return win32gui.CreateWindow(
-            class_atom,
+        self.class_atom = win32gui.RegisterClass(wc)
+        self.window_handle = win32gui.CreateWindow(
+            self.class_atom,
             "PowerMonitor",
             0,
             0, 0, 0, 0,
@@ -35,6 +37,16 @@ class PowerStateMonitor:
             wc.hInstance,
             None
         )
+        return self.window_handle
+
+    def destroy_window(self):
+        """Clean up window resources"""
+        if self.window_handle:
+            win32gui.DestroyWindow(self.window_handle)
+            self.window_handle = None
+        if self.class_atom:
+            win32gui.UnregisterClass(self.class_atom, win32api.GetModuleHandle(None))
+            self.class_atom = None
 
     def _window_proc(self, hwnd, msg, wparam, lparam):
         """Window procedure to handle power broadcast messages"""
@@ -49,12 +61,9 @@ class PowerStateMonitor:
         """Handle system suspend event"""
         print("[Service] System entering sleep state")
         # Stop file tracker if running
-        if self.tracker_process_ref.get('process') and self.tracker_process_ref['process'].is_alive():
-            print("[Service] Stopping file tracker before sleep")
-            self.tracker_process_ref['process'].terminate()
-            self.tracker_process_ref['process'].join()
-            self.tracker_process_ref['process'] = None
+        stop_tracker(self.tracker_process_ref)
 
+        # Update device state with sleep time
         current_state = load_device_state()
         if current_state:
             current_state["last_sleep"] = datetime.now().isoformat()
@@ -63,19 +72,39 @@ class PowerStateMonitor:
     def _on_resume(self):
         """Handle system resume event"""
         print("[Service] System resuming from sleep state")
+        
+        # Update device state with wake time
         current_state = load_device_state()
         if current_state:
             current_state["last_awake"] = datetime.now().isoformat()
             save_device_state(current_state)
             
         # Clear the handled_state.json to force authentication
-        try:
+        clear_handled_state()
+
+def stop_tracker(tracker_process_ref):
+    """Stop the file tracker process if it's running"""
+    if tracker_process_ref.get('process') and tracker_process_ref['process'].is_alive():
+        print("[Service] Stopping file tracker")
+        tracker_process_ref['process'].terminate()
+        tracker_process_ref['process'].join(timeout=3)
+        if tracker_process_ref['process'].is_alive():
+            tracker_process_ref['process'].kill()
+        tracker_process_ref['process'] = None
+        return True
+    return False
+
+def clear_handled_state():
+    """Clear the handled state file to force authentication"""
+    try:
+        if os.path.exists("handled_state.json"):
             os.remove("handled_state.json")
-        except FileNotFoundError:
-            pass
+            print("[Service] Cleared handled state")
+    except OSError as e:
+        print(f"[Service] Error clearing handled state: {e}")
 
 def initialize_device_state():
-    """Initialize the device state file with default values."""
+    """Initialize the device state file with default values"""
     current_time = datetime.now().isoformat()
     initial_state = {
         "last_awake": current_time,
@@ -84,13 +113,14 @@ def initialize_device_state():
     try:
         with open("device_state.json", "w") as state_file:
             json.dump(initial_state, state_file, indent=4)
+        print("[Service] Initialized device state")
         return initial_state
     except IOError as e:
         print(f"[Service] Error initializing device state: {e}")
         return None
 
 def load_device_state(set_awake=False):
-    """Load the device state, initialize if not present."""
+    """Load the device state, initialize if not present"""
     try:
         with open("device_state.json", "r") as state_file:
             state = json.load(state_file)
@@ -106,7 +136,7 @@ def load_device_state(set_awake=False):
         return initialize_device_state()
 
 def save_device_state(state):
-    """Save the device state."""
+    """Save the device state"""
     try:
         with open("device_state.json", "w") as state_file:
             json.dump(state, state_file, indent=4)
@@ -114,7 +144,7 @@ def save_device_state(state):
         print(f"[Service] Error saving device state: {e}")
 
 def load_last_handled_awake():
-    """Load the last handled wake-up timestamp from a file."""
+    """Load the last handled wake-up timestamp from a file"""
     try:
         with open("handled_state.json", "r") as state_file:
             state = json.load(state_file)
@@ -123,34 +153,35 @@ def load_last_handled_awake():
         return None
 
 def save_last_handled_awake(timestamp):
-    """Save the last handled wake-up timestamp to a file."""
+    """Save the last handled wake-up timestamp to a file"""
     try:
         with open("handled_state.json", "w") as state_file:
             json.dump({"last_handled_awake": timestamp.isoformat()}, state_file)
+        print(f"[Service] Updated handled wake time: {timestamp}")
     except IOError as e:
         print(f"[Service] Error saving handled state: {e}")
 
-def run_file_tracker():
-    """Run the file tracker."""
+def start_file_tracker(tracker_process_ref):
+    """Start the file tracker in a separate process"""
     print("[Service] Starting file tracker...")
-    os.system("python file_tracker.py")
+    tracker_process_ref['process'] = multiprocessing.Process(
+        target=lambda: os.system("python file_tracker.py")
+    )
+    tracker_process_ref['process'].start()
 
 def launch_auth_app():
-    """Run the authentication app and block until it exits."""
+    """Run the authentication app and block until it exits"""
     print("[Service] Starting auth app...")
     process = Popen([sys.executable, "auth_app.py"])
     process.wait()
     print("[Service] Auth app exited.")
 
-def cleanup_handler(tracker_process_ref=None):
-    """Handle cleanup when service is shutting down."""
+def cleanup_handler(tracker_process_ref, power_monitor):
+    """Handle cleanup when service is shutting down"""
     print("[Service] Performing cleanup...")
     
     # Stop the file tracker if it's running
-    if tracker_process_ref and tracker_process_ref.get('process') and tracker_process_ref['process'].is_alive():
-        print("[Service] Stopping file tracker...")
-        tracker_process_ref['process'].terminate()
-        tracker_process_ref['process'].join()
+    stop_tracker(tracker_process_ref)
 
     # Update device state with sleep time
     current_state = load_device_state()
@@ -158,8 +189,13 @@ def cleanup_handler(tracker_process_ref=None):
         current_state["last_sleep"] = datetime.now().isoformat()
         save_device_state(current_state)
         print("[Service] Updated device state with sleep time")
+    
+    # Clean up window resources
+    if power_monitor:
+        power_monitor.destroy_window()
 
 def monitor_device_state():
+    """Main function to monitor device state and manage processes"""
     print("[Service] Initializing device state monitoring...")
     handled_awake = load_last_handled_awake()
     tracker_process_ref = {'process': None}  # Using a dict to store the process reference
@@ -173,17 +209,22 @@ def monitor_device_state():
     print("[Service] Set new wake time on startup")
 
     def signal_handler(signum, frame):
-        print("[Service] Received shutdown signal...")
-        cleanup_handler(tracker_process_ref)
-        win32gui.DestroyWindow(monitor_window)
+        """Handle termination signals"""
+        print(f"[Service] Received signal {signum}...")
+        cleanup_handler(tracker_process_ref, power_monitor)
         sys.exit(0)
 
+    # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    while True:
-        try:
-            win32gui.PumpWaitingMessages()
+    try:
+        while True:
+            # Process any waiting window messages
+            for _ in range(10):  # Process a limited number of messages per cycle
+                if not win32gui.PumpWaitingMessages():
+                    break
+                
             current_state = load_device_state()
 
             if not current_state:
@@ -194,6 +235,7 @@ def monitor_device_state():
             current_awake = datetime.fromisoformat(current_state["last_awake"]) if current_state.get("last_awake") else None
             current_sleep = datetime.fromisoformat(current_state["last_sleep"]) if current_state.get("last_sleep") else None
 
+            # Check if this is a new wake event that needs handling
             is_new_wake = (
                 current_awake and 
                 (
@@ -208,26 +250,27 @@ def monitor_device_state():
                 handled_awake = current_awake
                 save_last_handled_awake(handled_awake)
 
-                if tracker_process_ref.get('process') and tracker_process_ref['process'].is_alive():
-                    print("[Service] Stopping file tracker before auth.")
-                    tracker_process_ref['process'].terminate()
-                    tracker_process_ref['process'].join()
+                # Stop tracker if running
+                stop_tracker(tracker_process_ref)
 
+                # Run authentication
                 launch_auth_app()
 
+                # Start file tracker after authentication
                 print("[Service] Starting file tracker after auth.")
-                tracker_process_ref['process'] = multiprocessing.Process(target=run_file_tracker)
-                tracker_process_ref['process'].start()
+                start_file_tracker(tracker_process_ref)
 
+                # Reset sleep state
                 current_state["last_sleep"] = None
                 save_device_state(current_state)
 
-        except Exception as e:
-            print(f"[Service] Error in monitor loop: {e}")
-            time.sleep(5)
-            continue
-
-        time.sleep(1)
+            time.sleep(1)
+    except Exception as e:
+        print(f"[Service] Unexpected error: {e}")
+        cleanup_handler(tracker_process_ref, power_monitor)
+        raise
+    finally:
+        cleanup_handler(tracker_process_ref, power_monitor)
 
 if __name__ == "__main__":
     print("[Service] Starting main service...")
@@ -235,4 +278,3 @@ if __name__ == "__main__":
         monitor_device_state()
     except KeyboardInterrupt:
         print("[Service] Stopping service...")
-        cleanup_handler()
