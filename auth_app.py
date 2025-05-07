@@ -15,6 +15,9 @@ import ntsecuritycon
 import pythoncom
 import pyWinhook as pyhook
 import os
+import ctypes
+from ctypes import wintypes
+import keyboard
 
 def load_files_during_sleep():
     # Load files accessed during the last session.
@@ -66,42 +69,67 @@ class AuthenticationApp(QWidget):
         self.makeSecure()
         self.setupSecureDesktop()
 
-
     def setupSecureDesktop(self):
         try:
-            # Store the current desktop handle
-            self.original_desktop = win32api.GetThreadDesktop(win32api.GetCurrentThreadId())
 
-            # Create a new secure desktop
-            self.secure_desktop = win32api.CreateDesktop(
-                "SecureAuthDesktop",
-                0,  # No special flags
-                win32con.GENERIC_ALL,  # Full access rights
-                win32security.SECURITY_ATTRIBUTES()
+            GENERIC_ALL = 0x10000000
+
+            class SECURITY_ATTRIBUTES(ctypes.Structure):
+                _fields_ = [
+                    ('nLength', wintypes.DWORD),
+                    ('lpSecurityDescriptor', wintypes.LPVOID),
+                    ('bInheritHandle', wintypes.BOOL),
+                ]
+
+            # Load DLLs
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
+            kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+
+            # Function prototypes
+            CreateDesktopW = user32.CreateDesktopW
+            CreateDesktopW.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.LPCWSTR,
+                wintypes.LPVOID,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                ctypes.POINTER(SECURITY_ATTRIBUTES),
+            ]
+            CreateDesktopW.restype = wintypes.HDESK
+
+            GetThreadDesktop = user32.GetThreadDesktop
+            GetThreadDesktop.argtypes = [wintypes.DWORD]
+            GetThreadDesktop.restype = wintypes.HDESK
+
+            SetThreadDesktop = user32.SetThreadDesktop
+            SetThreadDesktop.argtypes = [wintypes.HDESK]
+            SetThreadDesktop.restype = wintypes.BOOL
+
+            GetCurrentThreadId = kernel32.GetCurrentThreadId
+            GetCurrentThreadId.restype = wintypes.DWORD
+
+            # Create SECURITY_ATTRIBUTES with default (NULL) security descriptor
+            sa = SECURITY_ATTRIBUTES()
+            sa.nLength = ctypes.sizeof(SECURITY_ATTRIBUTES)
+            sa.lpSecurityDescriptor = None
+            sa.bInheritHandle = False
+
+            # Save original desktop
+            thread_id = GetCurrentThreadId()
+            original_desktop = GetThreadDesktop(thread_id)
+
+            # Create the new desktop
+            secure_desktop = CreateDesktopW(
+                "MySecureDesktop",
+                None,
+                None,
+                0,
+                GENERIC_ALL,
+                ctypes.byref(sa)
             )
 
-            # Switch to the secure desktop
-            self.secure_desktop.SetThreadDesktop()
-
-            # Set strict security descriptor
-            sd = win32security.SECURITY_DESCRIPTOR()
-            sd.Initialize()
-            
-            # Create a restricted SID for the desktop
-            restricted_sid = win32security.CreateWellKnownSid(
-                win32security.WinRestrictedCodeSid
-            )
-            
-            # Set up DACL (Discretionary Access Control List)
-            dacl = win32security.ACL()
-            dacl.AddAccessAllowedAce(
-                win32security.ACL_REVISION,
-                win32con.GENERIC_READ | win32con.GENERIC_EXECUTE,
-                restricted_sid
-            )
-            
-            sd.SetDacl(1, dacl, 0)
-            self.secure_desktop.SetSecurityDescriptor(sd)
+            # Switch to the new desktop
+            SetThreadDesktop(secure_desktop)
 
         except Exception as e:
             print(f"Error setting up secure desktop: {e}")
@@ -281,18 +309,18 @@ class AuthenticationApp(QWidget):
         return True
 
     def on_keyboard_event(self, event):
-        # Handle keyboard events
-        # Block Alt+F4, Alt+Tab, Win key, Ctrl+Esc, Ctrl+Alt+Del
-        if (
-            (event.Alt and event.Key == 'F4') or
-            (event.Alt and event.Key == 'Tab') or
-            (event.Key == 'Lwin') or
-            (event.Key == 'Rwin') or
-            (event.Control and event.Key == 'Escape') or
-            (event.Control and event.Alt and event.Key == 'Delete')
-        ):
-            return False
-        return True
+            # Handle keyboard events
+            # Block Alt+F4, Alt+Tab, Win key, Ctrl+Esc, Ctrl+Alt+Del
+            if (
+                (event.Alt and event.Key == 'F4') or
+                (event.Alt and event.Key == 'Tab') or
+                (event.Key == 'Lwin') or
+                (event.Key == 'Rwin') or
+                (event.Key == 'Escape') or    
+                (event.Key == 'esc')    
+            ):
+                return False
+            return True
 
     def enforce_focus(self):
         # Keep window focused and on top
@@ -307,28 +335,19 @@ class AuthenticationApp(QWidget):
         try:
             # Unhook mouse before cleanup
             self.hm.UnhookMouse()
+            user32 = ctypes.WinDLL('user32', use_last_error=True)
             
             if self.original_desktop:
-                win32api.SetThreadDesktop(self.original_desktop)
-            
-            if self.secure_desktop:
-                self.secure_desktop.CloseDesktop()
+                SetThreadDesktop = user32.SetThreadDesktop
+                SetThreadDesktop.argtypes = [wintypes.HDESK]
+                SetThreadDesktop.restype = wintypes.BOOL
+                SetThreadDesktop(self.original_desktop)
 
-            # Re-enable task manager if it was disabled
-            key = win32api.RegOpenKeyEx(
-                win32con.HKEY_CURRENT_USER,
-                "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
-                0,
-                win32con.KEY_SET_VALUE
-            )
-            win32api.RegSetValueEx(
-                key,
-                "DisableTaskMgr",
-                0,
-                win32con.REG_DWORD,
-                0
-            )
-            win32api.RegCloseKey(key)
+            if self.secure_desktop:
+                CloseDesktop = user32.CloseDesktop
+                CloseDesktop.argtypes = [wintypes.HDESK]
+                CloseDesktop.restype = wintypes.BOOL
+                CloseDesktop(self.secure_desktop)
 
         except Exception as e:
             print(f"Error during cleanup: {e}")
