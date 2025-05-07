@@ -64,76 +64,7 @@ class AuthenticationApp(QWidget):
         self.mouse_position = None  # Store initial mouse position
         self.initUI()
         self.makeSecure()
-        self.setupSecureDesktop()
-
-
-    def setupSecureDesktop(self):
-        try:
-            # Store the current desktop handle
-            self.original_desktop = win32api.GetThreadDesktop(win32api.GetCurrentThreadId())
-
-            # Create a new secure desktop
-            self.secure_desktop = win32api.CreateDesktop(
-                "SecureAuthDesktop",
-                0,  # No special flags
-                win32con.GENERIC_ALL,  # Full access rights
-                win32security.SECURITY_ATTRIBUTES()
-            )
-
-            # Switch to the secure desktop
-            self.secure_desktop.SetThreadDesktop()
-
-            # Set strict security descriptor
-            sd = win32security.SECURITY_DESCRIPTOR()
-            sd.Initialize()
-            
-            # Create a restricted SID for the desktop
-            restricted_sid = win32security.CreateWellKnownSid(
-                win32security.WinRestrictedCodeSid
-            )
-            
-            # Set up DACL (Discretionary Access Control List)
-            dacl = win32security.ACL()
-            dacl.AddAccessAllowedAce(
-                win32security.ACL_REVISION,
-                win32con.GENERIC_READ | win32con.GENERIC_EXECUTE,
-                restricted_sid
-            )
-            
-            sd.SetDacl(1, dacl, 0)
-            self.secure_desktop.SetSecurityDescriptor(sd)
-
-        except Exception as e:
-            print(f"Error setting up secure desktop: {e}")
-            # Fallback to regular desktop with enhanced protection
-            self.setupFallbackProtection()
-
-    def setupFallbackProtection(self):
-        # Fallback protection if secure desktop creation fails
-        try:
-            # Disable task manager access
-            key = win32api.RegOpenKeyEx(
-                win32con.HKEY_CURRENT_USER,
-                "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
-                0,
-                win32con.KEY_SET_VALUE
-            )
-            win32api.RegSetValueEx(
-                key,
-                "DisableTaskMgr",
-                0,
-                win32con.REG_DWORD,
-                1
-            )
-            win32api.RegCloseKey(key)
-
-            # Set up a watchdog timer to detect desktop switches
-            self.watchdog = QTimer(self)
-            self.watchdog.timeout.connect(self.checkDesktopState)
-            self.watchdog.start(100)
-
-        except Exception as e:
-            print(f"Error setting up fallback protection: {e}")
+        #self.setupSecureDesktop()    
 
     def checkDesktopState(self):
         # Monitor for desktop switching attempts
@@ -288,8 +219,8 @@ class AuthenticationApp(QWidget):
             (event.Alt and event.Key == 'Tab') or
             (event.Key == 'Lwin') or
             (event.Key == 'Rwin') or
-            (event.Control and event.Key == 'Escape') or
-            (event.Control and event.Alt and event.Key == 'Delete')
+            (event.Key == 'Escape') or    
+            (event.Key == 'esc')    
         ):
             return False
         return True
@@ -315,20 +246,20 @@ class AuthenticationApp(QWidget):
                 self.secure_desktop.CloseDesktop()
 
             # Re-enable task manager if it was disabled
-            key = win32api.RegOpenKeyEx(
-                win32con.HKEY_CURRENT_USER,
-                "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
-                0,
-                win32con.KEY_SET_VALUE
-            )
-            win32api.RegSetValueEx(
-                key,
-                "DisableTaskMgr",
-                0,
-                win32con.REG_DWORD,
-                0
-            )
-            win32api.RegCloseKey(key)
+            #key = win32api.RegOpenKeyEx(
+                #win32con.HKEY_CURRENT_USER,
+                #"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+                #0,
+                #win32con.KEY_SET_VALUE
+            #)
+            #win32api.RegSetValueEx(
+                #key,
+                #"DisableTaskMgr",
+                #0,
+                #win32con.REG_DWORD,
+                #0
+            #)
+            #win32api.RegCloseKey(key)
 
         except Exception as e:
             print(f"Error during cleanup: {e}")
